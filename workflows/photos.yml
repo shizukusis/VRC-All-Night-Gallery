@@ -1,0 +1,63 @@
+# photos/ に入れた画像を VRChat 用に加工して GitHub Pages に公開する。
+#   photos/<任意の名前>.jpg|png|webp|gif|bmp
+#     → https://<user>.github.io/<repo>/photos/0.jpg, 1.jpg, ...  (ファイル名順、2048px 以内に縮小、EXIF 除去)
+#     → https://<user>.github.io/<repo>/photos/index.txt            (1 行目 = 枚数、以降 = 元ファイル名)
+# 事前に Settings > Pages > Source を "GitHub Actions" にしておくこと。
+name: Publish photos
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ImageMagick
+        run: sudo apt-get update -q && sudo apt-get install -y -q imagemagick
+
+      - name: Convert photos
+        run: |
+          set -e
+          mkdir -p _site/photos
+          : > names.txt
+          find photos -maxdepth 1 -type f \( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' -o -iname '*.gif' -o -iname '*.bmp' \) \
+            | sort -f > list.txt
+          i=0
+          while IFS= read -r f; do
+            # [0] = アニメ GIF の先頭フレーム。-auto-orient で EXIF の回転を反映、-strip で位置情報などを除去
+            convert "$f[0]" -auto-orient -resize '2048x2048>' -strip -interlace none -quality 90 "_site/photos/$i.jpg"
+            basename "$f" >> names.txt
+            i=$((i+1))
+          done < list.txt
+          { echo "$i"; cat names.txt; } > _site/photos/index.txt
+          echo "<!doctype html><meta charset=utf-8><title>photos</title><pre>$(cat _site/photos/index.txt)</pre>" > _site/index.html
+          echo "published $i photos"
+          cat _site/photos/index.txt
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
